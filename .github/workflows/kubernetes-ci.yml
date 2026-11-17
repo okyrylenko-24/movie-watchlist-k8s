@@ -1,0 +1,100 @@
+name: Kubernetes CI/CD
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-and-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v5
+        with:
+          version: v1.37.0
+
+      - name: Install Minikube
+        run: |
+          curl -fsSL -o /tmp/minikube https://github.com/kubernetes/minikube/releases/download/v1.39.0/minikube-linux-amd64
+          sudo install /tmp/minikube /usr/local/bin/minikube
+
+      - name: Prepare environment
+        env:
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        run: |
+          : "${POSTGRES_DB:?Missing secret POSTGRES_DB}"
+          : "${POSTGRES_USER:?Missing secret POSTGRES_USER}"
+          : "${POSTGRES_PASSWORD:?Missing secret POSTGRES_PASSWORD}"
+
+          printf 'POSTGRES_DB=%s\nPOSTGRES_USER=%s\nPOSTGRES_PASSWORD=%s\n' \
+            "$POSTGRES_DB" "$POSTGRES_USER" "$POSTGRES_PASSWORD" > .env
+
+          printf 'PGADMIN_DEFAULT_EMAIL=%s\nPGADMIN_DEFAULT_PASSWORD=%s\n' \
+            'ci-admin@example.com' "$(openssl rand -hex 24)" >> .env
+
+          chmod 600 .env
+
+      - name: Deploy to Kubernetes
+        run: bash k8s/deploy.sh
+
+      - name: Smoke test REST API and pgAdmin
+        run: |
+          kubectl get pods,deploy,rs
+          kubectl get svc,ingress,pv,pvc
+
+          kubectl port-forward service/watchlist-api 18080:8080 >/tmp/watchlist-port-forward.log 2>&1 &
+          api_pf_pid=$!
+
+          kubectl port-forward service/watchlist-pgadmin 15050:5050 >/tmp/pgadmin-port-forward.log 2>&1 &
+          pgadmin_pf_pid=$!
+
+          trap 'kill "$api_pf_pid" "$pgadmin_pf_pid" 2>/dev/null || true' EXIT
+
+          ready=0
+          for attempt in {1..30}; do
+            if curl -fsS http://127.0.0.1:18080/api/movies >/tmp/movies.json 2>/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+
+          test "$ready" -eq 1
+
+          curl -fsS -X POST http://127.0.0.1:18080/api/movies \
+            -H 'Content-Type: application/json' \
+            -d '{"title":"CI Demo Movie","genre":"Test","releaseYear":2026,"watched":false}'
+
+          curl -fsS http://127.0.0.1:18080/api/movies | grep -q '"title":"CI Demo Movie"'
+
+          echo 'API smoke test passed'
+
+          ready=0
+          for attempt in {1..40}; do
+            if curl -fsSL http://127.0.0.1:15050/login -o /tmp/pgadmin.html 2>/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+
+          test "$ready" -eq 1
+
+          grep -qi 'pgadmin' /tmp/pgadmin.html
+
+          echo 'pgAdmin HTTP check passed'
+
+      - name: Remove local environment file
+        if: always()
+        run: rm -f .env

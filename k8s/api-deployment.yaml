@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: watchlist-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: watchlist-api
+  template:
+    metadata:
+      labels:
+        app: watchlist-api
+    spec:
+      initContainers:
+        - name: wait-for-postgres
+          image: postgres:17
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until pg_isready -q -h watchlist-postgres -p 5432 -U "$POSTGRES_USER" -d "$POSTGRES_DB"; do
+                echo "Waiting for PostgreSQL..."
+                sleep 2
+              done
+          envFrom:
+            - secretRef:
+                name: watchlist-db-secret
+
+      containers:
+        - name: api
+          image: movie-watchlist-api:1.0
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - containerPort: 8080
+
+          envFrom:
+            - configMapRef:
+                name: watchlist-api-config
+            - secretRef:
+                name: watchlist-db-secret
+
+          readinessProbe:
+            httpGet:
+              path: /api/movies
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "768Mi"
+              cpu: "1000m"

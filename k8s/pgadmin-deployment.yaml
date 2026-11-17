@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: watchlist-pgadmin
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: watchlist-pgadmin
+  template:
+    metadata:
+      labels:
+        app: watchlist-pgadmin
+    spec:
+      initContainers:
+        - name: prepare-storage
+          image: busybox:1.36
+          command:
+            - /bin/sh
+            - -c
+            - chown -R 5050:5050 /var/lib/pgadmin
+          volumeMounts:
+            - name: pgadmin-storage
+              mountPath: /var/lib/pgadmin
+
+      containers:
+        - name: pgadmin
+          image: dpage/pgadmin4:9.19
+          ports:
+            - containerPort: 80
+
+          env:
+            - name: PGADMIN_DEFAULT_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: watchlist-pgadmin-secret
+                  key: PGADMIN_DEFAULT_EMAIL
+
+            - name: PGADMIN_DEFAULT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: watchlist-pgadmin-secret
+                  key: PGADMIN_DEFAULT_PASSWORD
+
+            - name: PGADMIN_DISABLE_POSTFIX
+              value: "1"
+
+          volumeMounts:
+            - name: pgadmin-storage
+              mountPath: /var/lib/pgadmin
+
+          readinessProbe:
+            httpGet:
+              path: /login
+              port: 80
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
+
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+
+      volumes:
+        - name: pgadmin-storage
+          persistentVolumeClaim:
+            claimName: watchlist-pgadmin-pvc

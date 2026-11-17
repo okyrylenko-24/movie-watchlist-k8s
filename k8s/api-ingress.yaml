@@ -1,0 +1,17 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: watchlist-api-ingress
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: watchlist.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: watchlist-api
+                port:
+                  number: 8080

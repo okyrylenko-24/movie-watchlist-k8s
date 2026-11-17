@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: watchlist-api-config
+data:
+  DB_HOST: "watchlist-postgres"
+  DB_PORT: "5432"

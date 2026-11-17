@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: watchlist-api-loadbalancer
+spec:
+  type: LoadBalancer
+  selector:
+    app: watchlist-api
+  ports:
+    - name: http
+      protocol: TCP
+      port: 8080
+      targetPort: 8080
